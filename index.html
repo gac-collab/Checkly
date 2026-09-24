@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GAC Fleet Checklists</title>
+<style>
+:root{
+  --navy:#0f2a43; --amber:#e69b12; --ok:#1f8a4c; --notok:#c2392b; --miss:#8a8f98;
+  --bg:#f2f4f6; --card:#ffffff; --text:#101720; --sub:#5b6472; --line:#dde3e9;
+}
+@media (prefers-color-scheme: dark){ :root{ --bg:#0c1116; --card:#141b23; --text:#e8edf2; --sub:#93a0ad; --line:#26313c; } }
+*{box-sizing:border-box;}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;}
+header{position:sticky;top:0;background:var(--navy);color:#fff;padding:14px 16px;}
+header h1{margin:0;font-size:17px;}
+main{max-width:760px;margin:0 auto;padding:16px 14px 60px;}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px;}
+h2{font-size:15px;margin:0 0 10px;color:var(--sub);text-transform:uppercase;letter-spacing:.5px;font-weight:700;}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+label{display:block;font-size:12.5px;color:var(--sub);margin-bottom:4px;font-weight:600;}
+input,textarea{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font-size:14.5px;font-family:inherit;}
+textarea{resize:vertical;min-height:38px;}
+.field{margin-bottom:10px;}
+.chip-row{display:flex;gap:6px;flex-wrap:wrap;}
+.chip{padding:10px 12px;border-radius:9px;border:1px solid var(--line);background:var(--card);cursor:pointer;font-size:13.5px;font-weight:600;color:var(--text);}
+.item{border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:9px;}
+.item .desc{font-size:14px;font-weight:600;margin-bottom:8px;}
+.cond{display:flex;gap:6px;margin-bottom:6px;}
+.cbtn{flex:1;padding:8px 4px;border-radius:7px;border:1px solid var(--line);background:var(--bg);font-size:12.5px;font-weight:700;cursor:pointer;color:var(--sub);}
+.cbtn[data-v="OK"].on{background:var(--ok);color:#fff;border-color:var(--ok);}
+.cbtn[data-v="NOTOK"].on{background:var(--notok);color:#fff;border-color:var(--notok);}
+.cbtn[data-v="MISS"].on{background:var(--miss);color:#fff;border-color:var(--miss);}
+.btn{padding:11px 16px;border-radius:9px;border:none;background:var(--navy);color:#fff;font-weight:700;font-size:14.5px;cursor:pointer;}
+.btn.amber{background:var(--amber);color:#231400;}
+.btn.ghost{background:transparent;color:var(--navy);border:1px solid var(--navy);}
+.btn.sm{padding:7px 10px;font-size:12.5px;border-radius:7px;}
+#toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 18px;border-radius:20px;font-size:13.5px;opacity:0;pointer-events:none;transition:opacity .25s;}
+#toast.show{opacity:1;}
+</style>
+</head>
+<body>
+<header><h1>GAC Fleet Maintenance Checklist</h1></header>
+<main id="main"></main>
+<div id="toast"></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="templates.js"></script>
+<script src="firebase-config.js"></script>
+<script>
+let cur={equip:null,tpl:null};
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200);}
+
+function renderEquipList(){
+  cur={equip:null,tpl:null};
+  let h='<div class="card"><h2>Select Equipment Type</h2><div class="chip-row">';
+  for(const k in TEMPLATES) h+=`<button class="chip" data-k="${k}">${TEMPLATES[k].label}</button>`;
+  h+='</div></div>';
+  document.getElementById('main').innerHTML=h;
+  document.querySelectorAll('.chip[data-k]').forEach(b=>b.onclick=()=>{cur.equip=b.dataset.k;renderTplList();});
+}
+
+function renderTplList(){
+  const eq=TEMPLATES[cur.equip];
+  let h=`<div class="card"><button class="btn ghost sm" id="back0">&larr; Back</button>
+  <h2 style="margin-top:10px">${eq.label} — Select Checklist</h2><div class="chip-row">`;
+  eq.tpls.forEach((t,i)=>h+=`<button class="chip" data-i="${i}">${t.title}<br><span style="font-weight:400;font-size:11px">${t.code}</span></button>`);
+  h+='</div></div>';
+  document.getElementById('main').innerHTML=h;
+  document.getElementById('back0').onclick=renderEquipList;
+  document.querySelectorAll('.chip[data-i]').forEach(b=>b.onclick=()=>{cur.tpl=eq.tpls[+b.dataset.i];renderForm();});
+}
+
+function renderForm(){
+  const t=cur.tpl;
+  let h=`<div class="card"><button class="btn ghost sm" id="back1">&larr; Back</button></div>
+  <div class="card"><h2>${TEMPLATES[cur.equip].label} — ${t.title} (${t.code})</h2>
+  <div class="grid">
+   <div class="field"><label>Equipment No.</label><input id="fEqptNo"></div>
+   <div class="field"><label>Equipment Code</label><input id="fEqptCode"></div>
+   <div class="field"><label>Make</label><input id="fMake"></div>
+   <div class="field"><label>Model</label><input id="fModel"></div>
+   <div class="field"><label>Engine Make</label><input id="fEngMake"></div>
+   <div class="field"><label>Engine Model</label><input id="fEngModel"></div>
+   <div class="field"><label>KMR / HMR</label><input id="fKmr"></div>
+   <div class="field"><label>Date</label><input type="date" id="fDate"></div>
+  </div></div>
+  <div class="card"><h2>Checklist Items</h2><div id="itemsWrap"></div></div>
+  <div class="card"><h2>Remarks</h2><textarea id="fRemarks" placeholder="Remarks..."></textarea></div>
+  <div class="card"><h2>Sign Off</h2><div class="grid">
+   <div class="field"><label>Mechanic</label><input id="fMech"></div>
+   <div class="field"><label>Operator</label><input id="fOper"></div>
+   <div class="field"><label>Supervisor</label><input id="fSup"></div>
+   <div class="field"><label>Reviewed By</label><input id="fRev"></div>
+  </div>
+  <button class="btn amber" id="submitBtn" style="width:100%;margin-top:8px">Submit Checklist</button></div>`;
+  document.getElementById('main').innerHTML=h;
+  document.getElementById('fDate').value=new Date().toISOString().slice(0,10);
+  document.getElementById('back1').onclick=renderTplList;
+  const wrap=document.getElementById('itemsWrap');
+  t.items.forEach((desc,i)=>{
+    const d=document.createElement('div');d.className='item';
+    d.innerHTML=`<div class="desc">${i+1}. ${desc}</div>
+      <div class="cond" data-idx="${i}">
+        <button class="cbtn" data-v="OK">OK</button>
+        <button class="cbtn" data-v="NOTOK">NOT OK</button>
+        <button class="cbtn" data-v="MISS">MISSING</button>
+      </div>
+      <textarea placeholder="Findings / action taken" data-f="${i}"></textarea>`;
+    wrap.appendChild(d);
+  });
+  wrap.querySelectorAll('.cbtn').forEach(b=>b.onclick=()=>{
+    b.parentElement.querySelectorAll('.cbtn').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on');
+  });
+  document.getElementById('submitBtn').onclick=submitRecord;
+}
+
+function val(id){return document.getElementById(id).value;}
+
+async function submitRecord(){
+  if(!val('fEqptNo').trim()){ toast('Enter Equipment No. before submitting'); document.getElementById('fEqptNo').focus(); return; }
+  const btn=document.getElementById('submitBtn'); btn.disabled=true; btn.textContent='Submitting…';
+  const t=cur.tpl;
+  const items=t.items.map((desc,i)=>{
+    const condEl=document.querySelector(`.cond[data-idx="${i}"] .cbtn.on`);
+    const findEl=document.querySelector(`[data-f="${i}"]`);
+    return {desc, cond: condEl?condEl.dataset.v:"", findings: findEl.value};
+  });
+  const notOk = items.filter(x=>x.cond==='NOTOK').length;
+  const rec = {
+    equip: cur.equip, equipLabel: TEMPLATES[cur.equip].label,
+    code: t.code, title: t.title,
+    eqptNo: val('fEqptNo'), eqptCode: val('fEqptCode'), make: val('fMake'), model: val('fModel'),
+    engMake: val('fEngMake'), engModel: val('fEngModel'), kmr: val('fKmr'), date: val('fDate'),
+    items, remarks: val('fRemarks'),
+    mechanic: val('fMech'), operator: val('fOper'), supervisor: val('fSup'), reviewedBy: val('fRev'),
+    notOkCount: notOk, submittedAt: new Date().toISOString()
+  };
+  try{
+    await db.collection('checklists').add(rec);
+    toast('Checklist submitted');
+  }catch(e){
+    toast('Save failed — check internet connection');
+    btn.disabled=false; btn.textContent='Submit Checklist';
+    return;
+  }
+  renderEquipList();
+}
+
+renderEquipList();
+</script>
+</body>
+</html>
