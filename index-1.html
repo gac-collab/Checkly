@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GAC Fleet Checklists</title>
+<link rel="stylesheet" href="theme.css">
+</head>
+<body>
+<header class="appbar">
+  <div class="appbar-row">
+    <img id="logoImg" alt="GAC logo">
+    <div><h1>GAC Fleet Checklists</h1><div class="sub">Site Team</div></div>
+  </div>
+  <div class="tabs">
+    <button class="tab active" id="tabNew">New Checklist</button>
+    <button class="tab" id="tabMine">My Submissions</button>
+    <button class="tab" id="tabSvc">Service Due<span class="tab-badge" id="svcBadge" style="display:none"></span></button>
+  </div>
+</header>
+<main id="main"></main>
+<div id="toast"></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="logo.js"></script>
+<script src="templates.js"></script>
+<script src="firebase-config.js"></script>
+<script src="shared.js"></script>
+<script src="service.js"></script>
+<script>
+document.getElementById('logoImg').src = LOGO_DATA_URI;
+let cur={equip:null,tpl:null,editId:null};
+
+document.getElementById('tabNew').onclick=()=>switchTab('new');
+document.getElementById('tabMine').onclick=()=>switchTab('mine');
+document.getElementById('tabSvc').onclick=()=>switchTab('svc');
+function switchTab(t){
+  document.getElementById('tabNew').classList.toggle('active',t==='new');
+  document.getElementById('tabMine').classList.toggle('active',t==='mine');
+  document.getElementById('tabSvc').classList.toggle('active',t==='svc');
+  if(t==='new') renderEquipList(); else if(t==='mine') renderMine(); else renderSvcSite();
+}
+
+/* ---------- Service Due (site view) ---------- */
+let svcFilter='ACTION', svcQ='', svcAll=[];
+async function svcBadge(){
+  try{
+    const items=await svcItems(); svcAll=items;
+    const n=items.filter(x=>x.level==='OVERDUE'||x.level==='HIGH').length;
+    const b=document.getElementById('svcBadge'); b.textContent=n; b.style.display=n?'inline-block':'none';
+    svcMaybeNotify(items);
+  }catch(e){ console.warn(e); }
+}
+async function renderSvcSite(){
+  const m=document.getElementById('main');
+  m.innerHTML='<div class="card muted">Loading service alerts…</div>';
+  try{ svcAll=await svcItems(); }
+  catch(e){ m.innerHTML='<div class="card empty">Could not load service alerts.<br>Check your internet connection.</div>'; return; }
+  const items=svcAll;
+  const c=k=>items.filter(x=>x.level===k).length;
+  const chips=[['ACTION','Needs action',c('OVERDUE')+c('HIGH')+c('MEDIUM')],['OVERDUE','Overdue',c('OVERDUE')],['ALL','All',items.length]];
+  const canNotify=svcNotifySupported()&&Notification.permission!=='granted';
+  m.innerHTML=`<div class="card"><h2 class="section">Service Due Alerts</h2>
+    <div class="muted">Based on the latest checklist KM / hour reading of each equipment.</div>
+    ${svcTilesHtml(items)}
+    <div class="chip-row" id="svcChips">${chips.map(x=>`<button class="chip ${svcFilter===x[0]?'sel':''}" data-f="${x[0]}">${x[1]} (${x[2]})</button>`).join('')}</div>
+    <div class="field" style="margin-top:12px;margin-bottom:0"><input id="svcSearch" placeholder="Search plate no. / equipment type" value="${escHtml(svcQ)}"></div>
+    ${canNotify?'<button class="btn ghost sm" id="svcNotifyBtn" style="margin-top:12px">🔔 Enable alert notifications</button>':''}
+  </div><div id="svcList"></div>`;
+  document.querySelectorAll('#svcChips .chip').forEach(b=>b.onclick=()=>{svcFilter=b.dataset.f;renderSvcSite();});
+  document.getElementById('svcSearch').oninput=e=>{svcQ=e.target.value;drawSvcList();};
+  const nb=document.getElementById('svcNotifyBtn'); if(nb) nb.onclick=async()=>{ if(await svcEnableNotify()) renderSvcSite(); };
+  drawSvcList();
+}
+function drawSvcList(){
+  const q=svcQ.trim().toLowerCase();
+  let list=svcAll.filter(x=> svcFilter==='ALL' ? true : svcFilter==='OVERDUE' ? x.level==='OVERDUE' : (x.level==='OVERDUE'||x.level==='HIGH'||x.level==='MEDIUM'));
+  if(q) list=list.filter(x=>(x.plate+' '+x.equipLabel).toLowerCase().includes(q));
+  document.getElementById('svcList').innerHTML = list.length ? list.map(x=>svcCardHtml(x,false)).join('')
+    : '<div class="card empty">'+(svcFilter==='ACTION'&&!q?'No services due right now 👍':'No equipment found.')+'</div>';
+}
+
+/* ---------- New Checklist flow ---------- */
+function renderEquipList(){
+  cur={equip:null,tpl:null,editId:null};
+  let h='<div class="card"><h2 class="section">Select Equipment Type</h2><div class="chip-row">';
+  for(const k in TEMPLATES) h+=`<button class="chip" data-k="${k}">${TEMPLATES[k].label}</button>`;
+  h+='</div></div>';
+  document.getElementById('main').innerHTML=h;
+  document.querySelectorAll('.chip[data-k]').forEach(b=>b.onclick=()=>{cur.equip=b.dataset.k;renderTplList();});
+}
+function renderTplList(){
+  const eq=TEMPLATES[cur.equip];
+  let h=`<div class="card"><button class="btn ghost sm" id="back0">&larr; Back</button>
+  <h2 class="section" style="margin-top:12px">${eq.label} — Select Checklist</h2><div class="chip-row">`;
+  eq.tpls.forEach((t,i)=>h+=`<button class="chip" data-i="${i}">${t.title}<small>${t.code}</small></button>`);
+  h+='</div></div>';
+  document.getElementById('main').innerHTML=h;
+  document.getElementById('back0').onclick=renderEquipList;
+  document.querySelectorAll('.chip[data-i]').forEach(b=>b.onclick=()=>{cur.tpl=eq.tpls[+b.dataset.i];cur.editId=null;renderForm();});
+}
+
+function renderForm(existingRecord){
+  const t=cur.tpl; const r=existingRecord||{};
+  const isEdit=!!existingRecord;
+  let h=`<div class="card"><button class="btn ghost sm" id="back1">&larr; Back</button></div>
+  <div class="card"><h2 class="section">${TEMPLATES[cur.equip].label} — ${t.title} (${t.code})</h2>
+    ${headerFieldsHtml(r)}
+  </div>
+  <div class="card"><h2 class="section">Checklist Items</h2>
+    <div class="progress"><div id="progBar" style="width:0%"></div></div>
+    <div class="muted" id="progLabel" style="margin:6px 0 12px">0 / ${t.items.length} items checked</div>
+    <div id="itemsWrap">${itemsBlockHtml(t.items, r.items)}</div>
+  </div>
+  <div class="card"><h2 class="section">Remarks <span class="req">*</span></h2><textarea id="fRemarks" placeholder="Remarks... (write None if no remarks)">${escHtml(r.remarks||'')}</textarea><div class="errmsg" id="fRemarksErr">${FIELD_RULES.fRemarks.msg}</div></div>
+  <div class="card"><h2 class="section">Sign Off</h2>${signoffFieldsHtml(r)}
+    <button class="btn red block" id="submitBtn" style="margin-top:10px">${isEdit?'Save Changes':'Submit Checklist'}</button>
+  </div>`;
+  document.getElementById('main').innerHTML=h;
+  if(!r.date) document.getElementById('fDate').value=new Date().toISOString().slice(0,10);
+  document.getElementById('back1').onclick=isEdit?renderMine:renderTplList;
+  attachValidation();
+  const wrap=document.getElementById('itemsWrap');
+  wireItemButtons(wrap);
+  document.getElementById('submitBtn').onclick=()=>submitRecord(isEdit);
+}
+
+async function submitRecord(isEdit){
+  if(!validateAllFields()){ toast('Please fill all required fields'); return; }
+  const btn=document.getElementById('submitBtn'); btn.disabled=true; btn.textContent='Saving…';
+  const t=cur.tpl;
+  const items=collectItems(t.items, document.getElementById('itemsWrap'));
+  const notOk = items.filter(x=>x.cond==='NOTOK').length;
+  const rec = {
+    equip: cur.equip, equipLabel: TEMPLATES[cur.equip].label, code: t.code, title: t.title,
+    eqptNo: val('fEqptNo'), eqptCode: val('fEqptCode'), make: val('fMake'), model: val('fModel'),
+    engMake: val('fEngMake'), engModel: val('fEngModel'), kmr: val('fKmr'), date: val('fDate'),
+    items, remarks: val('fRemarks'),
+    mechanic: val('fMech'), operator: val('fOper'), supervisor: val('fSup'), reviewedBy: val('fRev'),
+    notOkCount: notOk
+  };
+  try{
+    if(isEdit){
+      rec.updatedAt = new Date().toISOString();
+      await fsUpdate(cur.editId, rec);
+      toast('Checklist updated');
+    } else {
+      rec.submittedAt = new Date().toISOString();
+      const id = await fsCreate(rec);
+      myLocalAdd(id);
+      toast('Checklist submitted');
+    }
+    await svcUpdateStatus(rec);
+  }catch(e){
+    toast('Save failed — check internet connection');
+    btn.disabled=false; btn.textContent=isEdit?'Save Changes':'Submit Checklist';
+    return;
+  }
+  switchTab(isEdit?'mine':'new');
+}
+
+/* ---------- My Submissions ---------- */
+async function renderMine(){
+  const ids=myLocalIds();
+  document.getElementById('main').innerHTML='<div class="card muted">Loading your submissions…</div>';
+  const pairs = await Promise.all(ids.map(async id=>({id, r: await fsGet(id).catch(()=>null)})));
+  const stale = pairs.filter(p=>!p.r).map(p=>p.id);
+  stale.forEach(myLocalRemove);
+  const recs = pairs.filter(p=>p.r).map(p=>p.r);
+  if(!recs.length){ document.getElementById('main').innerHTML='<div class="card empty">You haven\'t submitted any checklists from this device yet.<br>Submissions you make will appear here.</div>'; return; }
+  let h='';
+  recs.forEach(r=>{
+    h+=`<div class="rec"><div class="row"><div class="t1">${escHtml(r.equipLabel)} — ${escHtml(r.title)}</div><div class="sp"></div>
+      <span class="badge ${r.notOkCount>0?'b-bad':'b-ok'}">${r.notOkCount>0? r.notOkCount+' issue(s)':'All OK'}</span></div>
+      <div class="t2">${escHtml(r.code)} · Eqpt No: ${escHtml(r.eqptNo)||'—'} · ${escHtml(r.date)||''}</div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn ghost sm" data-edit="${r.id}">Edit</button>
+        <button class="btn danger-ghost sm" data-del="${r.id}">Delete</button>
+      </div></div>`;
+  });
+  document.getElementById('main').innerHTML=h;
+  document.querySelectorAll('[data-edit]').forEach(b=>b.onclick=async()=>{
+    const r=await fsGet(b.dataset.edit); if(!r){toast('Not found');return;}
+    cur.equip=r.equip; cur.tpl=TEMPLATES[r.equip].tpls.find(t=>t.code===r.code); cur.editId=r.id;
+    if(!cur.tpl){ toast('This checklist type no longer exists'); return; }
+    renderForm(r);
+  });
+  document.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{
+    const ok=await confirmDialog('Delete this checklist?','This cannot be undone.');
+    if(!ok) return;
+    try{ await fsDelete(b.dataset.del); myLocalRemove(b.dataset.del); toast('Deleted'); renderMine(); }
+    catch(e){ toast('Delete failed'); }
+  });
+}
+
+renderEquipList();
+svcBadge();
+</script>
+</body>
+</html>

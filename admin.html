@@ -4,88 +4,73 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>GAC Admin Dashboard</title>
-<style>
-:root{
-  --navy:#0f2a43; --amber:#e69b12; --ok:#1f8a4c; --notok:#c2392b;
-  --bg:#f2f4f6; --card:#ffffff; --text:#101720; --sub:#5b6472; --line:#dde3e9;
-}
-@media (prefers-color-scheme: dark){ :root{ --bg:#0c1116; --card:#141b23; --text:#e8edf2; --sub:#93a0ad; --line:#26313c; } }
-*{box-sizing:border-box;}
-body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;}
-header{position:sticky;top:0;background:var(--navy);color:#fff;padding:14px 16px;}
-header h1{margin:0;font-size:17px;}
-main{max-width:820px;margin:0 auto;padding:16px 14px 60px;}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:14px;}
-h2{font-size:15px;margin:0 0 10px;color:var(--sub);text-transform:uppercase;letter-spacing:.5px;font-weight:700;}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
-input{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font-size:14.5px;}
-.btn{padding:11px 16px;border-radius:9px;border:none;background:var(--navy);color:#fff;font-weight:700;font-size:14.5px;cursor:pointer;}
-.btn.ghost{background:transparent;color:var(--navy);border:1px solid var(--navy);}
-.btn.sm{padding:7px 10px;font-size:12.5px;border-radius:7px;}
-.chip-row{display:flex;gap:6px;flex-wrap:wrap;}
-.chip{padding:9px 11px;border-radius:9px;border:1px solid var(--line);background:var(--card);cursor:pointer;font-size:13px;font-weight:600;color:var(--text);}
-.chip.sel{background:var(--navy);color:#fff;border-color:var(--navy);}
-.rec{border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:9px;cursor:pointer;}
-.rec .t1{font-weight:700;font-size:14.5px;}
-.rec .t2{font-size:12.5px;color:var(--sub);margin-top:2px;}
-.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700;color:#fff;}
-.b-ok{background:var(--ok);} .b-bad{background:var(--notok);}
-.muted{color:var(--sub);font-size:13px;}
-.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
-.sp{flex:1;}
-table{width:100%;border-collapse:collapse;font-size:13px;}
-th,td{padding:6px;border:1px solid var(--line);text-align:left;}
-@media print{ header,.no-print{display:none !important;} body{background:#fff;color:#000;} }
-</style>
+<link rel="stylesheet" href="theme.css">
 </head>
 <body>
-<header><h1>GAC Admin Dashboard</h1></header>
+<header class="appbar">
+  <div class="appbar-row">
+    <img id="logoImg" alt="GAC logo">
+    <div><h1>GAC Fleet Checklists</h1><div class="sub">Admin Dashboard</div></div>
+  </div>
+  <div class="tabs" id="admTabs" style="display:none">
+    <button class="tab active" id="admTabSubs">Submissions</button>
+    <button class="tab" id="admTabSvc">Service Alerts</button>
+  </div>
+</header>
 <main id="main"></main>
+<div id="toast"></div>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<script src="logo.js"></script>
 <script src="templates.js"></script>
 <script src="firebase-config.js"></script>
+<script src="shared.js"></script>
+<script src="service.js"></script>
 <script>
+document.getElementById('logoImg').src = LOGO_DATA_URI;
 // Change this PIN before sharing the admin link with anyone.
 const ADMIN_PIN = "4256";
-let records=[], adminFilter='all', issuesOnly=false;
+let records=[], adminFilter='all', issuesOnly=false, editingId=null;
 
 function gate(){
   const h=`<div class="card" style="max-width:320px;margin:60px auto">
-    <h2>Admin Access</h2>
-    <input type="password" id="pin" placeholder="Enter PIN" style="margin-bottom:10px">
-    <button class="btn" id="pinBtn" style="width:100%">Unlock</button>
+    <h2 class="section">Admin Access</h2>
+    <div class="field"><input type="password" id="pin" placeholder="Enter PIN"></div>
+    <button class="btn red block" id="pinBtn">Unlock</button>
   </div>`;
   document.getElementById('main').innerHTML=h;
   document.getElementById('pinBtn').onclick=()=>{
-    if(document.getElementById('pin').value===ADMIN_PIN){ renderDashboard(); }
-    else { alert('Incorrect PIN'); }
+    if(document.getElementById('pin').value===ADMIN_PIN){ document.getElementById('admTabs').style.display='flex'; renderDashboard(); }
+    else { toast('Incorrect PIN'); }
   };
   document.getElementById('pin').addEventListener('keydown',e=>{ if(e.key==='Enter') document.getElementById('pinBtn').click(); });
 }
 
-async function loadRecords(){
-  const snap = await db.collection('checklists').orderBy('submittedAt','desc').limit(500).get();
-  records = snap.docs.map(d=>({id:d.id, ...d.data()}));
-}
+async function loadRecords(){ records = await fsList(500); }
 
+function setAdmTab(t){
+  document.getElementById('admTabSubs').classList.toggle('active',t==='subs');
+  document.getElementById('admTabSvc').classList.toggle('active',t==='svc');
+}
 async function renderDashboard(){
+  setAdmTab('subs'); editingId=null;
+  document.getElementById('main').innerHTML='<div class="card muted">Loading…</div>';
   await loadRecords();
   const equips=[...new Set(records.map(r=>r.equip))];
   let list=records.filter(r=> (adminFilter==='all'||r.equip===adminFilter) && (!issuesOnly||r.notOkCount>0) );
-  let h=`<div class="card"><div class="row"><h2 style="margin:0">Submissions (${list.length}/${records.length})</h2><div class="sp"></div>
-   <button class="btn sm ghost no-print" id="exportBtn">Export CSV</button></div>
-   <div class="chip-row no-print" style="margin-top:10px">
+  let h=`<div class="card"><div class="row"><h2 class="section" style="margin:0">Submissions (${list.length}/${records.length})</h2><div class="sp"></div>
+   <button class="btn ghost sm no-print" id="exportBtn">Export CSV</button></div>
+   <div class="chip-row no-print" style="margin-top:12px">
     <button class="chip ${adminFilter==='all'?'sel':''}" data-eq="all">All</button>
     ${equips.map(e=>`<button class="chip ${adminFilter===e?'sel':''}" data-eq="${e}">${TEMPLATES[e]?TEMPLATES[e].label:e}</button>`).join('')}
     <button class="chip ${issuesOnly?'sel':''}" id="issuesToggle">⚠ Issues only</button>
    </div></div>`;
-  if(!list.length) h+='<div class="card muted">No checklists match.</div>';
+  if(!list.length) h+='<div class="card empty">No checklists match.</div>';
   list.forEach(r=>{
-    h+=`<div class="rec" data-id="${r.id}"><div class="row"><div class="t1">${r.equipLabel} — ${r.title}</div><div class="sp"></div>
+    h+=`<div class="rec" data-id="${r.id}"><div class="row"><div class="t1">${escHtml(r.equipLabel)} — ${escHtml(r.title)}</div><div class="sp"></div>
       <span class="badge ${r.notOkCount>0?'b-bad':'b-ok'}">${r.notOkCount>0? r.notOkCount+' issue(s)':'All OK'}</span></div>
-      <div class="t2">${r.code} · Eqpt No: ${r.eqptNo||'—'} · ${r.date||''} · by ${r.mechanic||'—'}</div></div>`;
+      <div class="t2">${escHtml(r.code)} · Eqpt No: ${escHtml(r.eqptNo)||'—'} · ${escHtml(r.date)||''} · Mechanic ID: ${escHtml(r.mechanic)||'—'}</div></div>`;
   });
   document.getElementById('main').innerHTML=h;
   document.querySelectorAll('.rec').forEach(el=>el.onclick=()=>renderRecordView(records.find(r=>r.id===el.dataset.id)));
@@ -95,40 +80,229 @@ async function renderDashboard(){
 }
 
 function renderRecordView(r){
-  let rows=r.items.map((it,i)=>`<tr><td>${i+1}</td><td>${it.desc}</td><td style="text-align:center">${it.cond||'-'}</td><td>${it.findings||''}</td></tr>`).join('');
+  let rows=r.items.map((it,i)=>`<tr><td>${i+1}</td><td>${escHtml(it.desc)}</td><td style="text-align:center">${escHtml(it.cond)||'-'}</td><td>${escHtml(it.findings)||''}</td></tr>`).join('');
   let h=`<div class="card no-print"><div class="row"><button class="btn ghost sm" id="backA">&larr; Back</button><div class="sp"></div>
+    <button class="btn ghost sm" id="editBtn">Edit</button>
+    <button class="btn danger-ghost sm" id="delBtn">Delete</button>
     <button class="btn sm" id="printBtn">Print / Save PDF</button></div></div>
    <div class="card">
-    <h2 style="color:var(--text);font-size:18px">GULF ASIA CONTRACTING COMPANY</h2>
-    <div class="muted">${r.title} — ${r.code}</div>
-    <div class="grid" style="margin-top:10px">
-      <div>Eqpt No: <b>${r.eqptNo||'—'}</b></div><div>Eqpt Code: <b>${r.eqptCode||'—'}</b></div>
-      <div>Make: <b>${r.make||'—'}</b></div><div>Model: <b>${r.model||'—'}</b></div>
-      <div>Engine Make: <b>${r.engMake||'—'}</b></div><div>Engine Model: <b>${r.engModel||'—'}</b></div>
-      <div>KMR/HMR: <b>${r.kmr||'—'}</b></div><div>Date: <b>${r.date||'—'}</b></div>
-    </div>
-    <table style="margin-top:14px"><tr><th>#</th><th>Description</th><th>Condition</th><th>Findings/Action</th></tr>${rows}</table>
-    <div style="margin-top:12px"><b>Remarks:</b> ${r.remarks||'—'}</div>
+    <div class="print-head" style="display:flex"><img src="${LOGO_DATA_URI}" alt="GAC logo"><h2 style="color:var(--text);font-size:18px;margin:0">GULF ASIA CONTRACTING COMPANY</h2></div>
+    <div class="muted">${escHtml(r.title)} — ${escHtml(r.code)}</div>
     <div class="grid" style="margin-top:12px">
-      <div>Mechanic: <b>${r.mechanic||'—'}</b></div><div>Operator: <b>${r.operator||'—'}</b></div>
-      <div>Supervisor: <b>${r.supervisor||'—'}</b></div><div>Reviewed By: <b>${r.reviewedBy||'—'}</b></div>
+      <div>Eqpt No: <b>${escHtml(r.eqptNo)||'—'}</b></div><div>Eqpt Code: <b>${escHtml(r.eqptCode)||'—'}</b></div>
+      <div>Make: <b>${escHtml(r.make)||'—'}</b></div><div>Model: <b>${escHtml(r.model)||'—'}</b></div>
+      <div>Engine Make: <b>${escHtml(r.engMake)||'—'}</b></div><div>Engine Model: <b>${escHtml(r.engModel)||'—'}</b></div>
+      <div>KMR/HMR: <b>${escHtml(r.kmr)||'—'}</b></div><div>Date: <b>${escHtml(r.date)||'—'}</b></div>
+    </div>
+    <table style="margin-top:16px"><tr><th>#</th><th>Description</th><th>Condition</th><th>Findings/Action</th></tr>${rows}</table>
+    <div style="margin-top:14px"><b>Remarks:</b> ${escHtml(r.remarks)||'—'}</div>
+    <div class="grid" style="margin-top:14px">
+      <div>Mechanic ID: <b>${escHtml(r.mechanic)||'—'}</b></div><div>Operator ID: <b>${escHtml(r.operator)||'—'}</b></div>
+      <div>Supervisor ID: <b>${escHtml(r.supervisor)||'—'}</b></div><div>Reviewed By ID: <b>${escHtml(r.reviewedBy)||'—'}</b></div>
     </div>
    </div>`;
   document.getElementById('main').innerHTML=h;
   document.getElementById('backA').onclick=renderDashboard;
   document.getElementById('printBtn').onclick=()=>window.print();
+  document.getElementById('editBtn').onclick=()=>renderEditForm(r);
+  document.getElementById('delBtn').onclick=async()=>{
+    const ok=await confirmDialog('Delete this checklist?','This cannot be undone.');
+    if(!ok) return;
+    try{ await fsDelete(r.id); toast('Deleted'); renderDashboard(); }catch(e){ toast('Delete failed'); }
+  };
 }
 
-function esc(v){return String(v==null?'':v).replace(/"/g,'""');}
+function renderEditForm(r){
+  editingId=r.id;
+  const tpl = TEMPLATES[r.equip] ? TEMPLATES[r.equip].tpls.find(t=>t.code===r.code) : null;
+  const items = tpl ? tpl.items : r.items.map(it=>it.desc);
+  let h=`<div class="card"><button class="btn ghost sm" id="backE">&larr; Cancel</button></div>
+  <div class="card"><h2 class="section">${escHtml(r.equipLabel)} — ${escHtml(r.title)} (${escHtml(r.code)})</h2>
+    ${headerFieldsHtml(r)}
+  </div>
+  <div class="card"><h2 class="section">Checklist Items</h2>
+    <div class="progress"><div id="progBar" style="width:0%"></div></div>
+    <div class="muted" id="progLabel" style="margin:6px 0 12px"></div>
+    <div id="itemsWrap">${itemsBlockHtml(items, r.items)}</div>
+  </div>
+  <div class="card"><h2 class="section">Remarks <span class="req">*</span></h2><textarea id="fRemarks">${escHtml(r.remarks||'')}</textarea><div class="errmsg" id="fRemarksErr">${FIELD_RULES.fRemarks.msg}</div></div>
+  <div class="card"><h2 class="section">Sign Off</h2>${signoffFieldsHtml(r)}
+    <button class="btn red block" id="saveEditBtn" style="margin-top:10px">Save Changes</button>
+  </div>`;
+  document.getElementById('main').innerHTML=h;
+  document.getElementById('backE').onclick=()=>renderRecordView(r);
+  attachValidation();
+  wireItemButtons(document.getElementById('itemsWrap'));
+  document.getElementById('saveEditBtn').onclick=async()=>{
+    if(!validateAllFields()){ toast('Please fill all required fields'); return; }
+    const btn=document.getElementById('saveEditBtn'); btn.disabled=true; btn.textContent='Saving…';
+    const itemsData=collectItems(items, document.getElementById('itemsWrap'));
+    const notOk=itemsData.filter(x=>x.cond==='NOTOK').length;
+    const upd={
+      eqptNo:val('fEqptNo'),eqptCode:val('fEqptCode'),make:val('fMake'),model:val('fModel'),
+      engMake:val('fEngMake'),engModel:val('fEngModel'),kmr:val('fKmr'),date:val('fDate'),
+      items:itemsData, remarks:val('fRemarks'),
+      mechanic:val('fMech'),operator:val('fOper'),supervisor:val('fSup'),reviewedBy:val('fRev'),
+      notOkCount:notOk, updatedAt:new Date().toISOString()
+    };
+    try{ await fsUpdate(editingId, upd); await svcUpdateStatus(Object.assign({},r,upd)); toast('Checklist updated'); renderDashboard(); }
+    catch(e){ toast('Save failed'); btn.disabled=false; btn.textContent='Save Changes'; }
+  };
+}
+
 function exportCSV(){
-  if(!records.length){ alert('No records to export'); return; }
-  let csv='Equipment,Checklist,Code,EqptNo,Date,Mechanic,Supervisor,IssuesFound\n';
+  if(!records.length){ toast('No records to export'); return; }
+  const esc=v=>String(v==null?'':v).replace(/"/g,'""');
+  let csv='Equipment,Checklist,Code,EqptNo,Date,MechanicID,OperatorID,SupervisorID,ReviewedByID,IssuesFound\n';
   records.forEach(r=>{
-    csv+=`"${esc(r.equipLabel)}","${esc(r.title)}","${esc(r.code)}","${esc(r.eqptNo)}","${esc(r.date)}","${esc(r.mechanic)}","${esc(r.supervisor)}",${r.notOkCount}\n`;
+    csv+=`"${esc(r.equipLabel)}","${esc(r.title)}","${esc(r.code)}","${esc(r.eqptNo)}","${esc(r.date)}","${esc(r.mechanic)}","${esc(r.operator)}","${esc(r.supervisor)}","${esc(r.reviewedBy)}",${r.notOkCount}\n`;
   });
   const blob=new Blob([csv],{type:'text/csv'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob); a.download='gac_checklists_export.csv'; a.click();
+}
+
+/* ---------- Service Alerts (admin) ---------- */
+document.getElementById('admTabSubs').onclick=()=>renderDashboard();
+document.getElementById('admTabSvc').onclick=()=>renderSvcAdmin();
+let svcAdm={raw:null,items:[],filter:'ALL',q:''};
+
+async function renderSvcAdmin(){
+  setAdmTab('svc'); editingId=null;
+  const m=document.getElementById('main');
+  m.innerHTML='<div class="card muted">Loading service alerts…</div>';
+  try{ svcAdm.raw=await svcLoadRaw(); }
+  catch(e){ m.innerHTML='<div class="card empty">Could not load service alerts.<br>Check connection and Firestore rules.</div>'; return; }
+  drawSvcAdmin();
+}
+function drawSvcAdmin(){
+  const raw=svcAdm.raw; const items=svcBuild(raw); svcAdm.items=items;
+  const cnt=k=>items.filter(x=>x.level===k).length;
+  const chips=[['ALL','All',items.length],['OVERDUE','Overdue',cnt('OVERDUE')],['HIGH','High',cnt('HIGH')],['MEDIUM','Due soon',cnt('MEDIUM')],['NONE','Set up',cnt('NONE')],['OK','OK',cnt('OK')]];
+  const canNotify=svcNotifySupported()&&Notification.permission!=='granted';
+  const rows=Object.keys(TEMPLATES).map(k=>{
+    const d=svcDefaultFor(k,raw.defs);
+    return `<div style="margin-bottom:12px"><div style="font-weight:700;font-size:13px;margin-bottom:5px">${escHtml(TEMPLATES[k].label)}</div>
+      <div style="display:grid;grid-template-columns:80px 1fr 1fr;gap:8px">
+        <select id="dfU_${k}"><option ${d.unit==='KM'?'selected':''}>KM</option><option ${d.unit==='HR'?'selected':''}>HR</option></select>
+        <input id="dfI_${k}" inputmode="numeric" placeholder="Service every" value="${d.interval}">
+        <input id="dfW_${k}" inputmode="numeric" placeholder="Alert before" value="${d.warn}"></div></div>`;
+  }).join('');
+  document.getElementById('main').innerHTML=`
+   <div class="card"><div class="row"><h2 class="section" style="margin:0">Service Alerts (${items.length})</h2><div class="sp"></div>
+     <button class="btn sm" id="svcAdd">+ Add alert</button></div>
+     ${svcTilesHtml(items)}
+     <div class="row" style="gap:6px;flex-wrap:wrap">
+       <button class="btn ghost sm" id="svcRebuild">↻ Refresh readings from checklists</button>
+       ${canNotify?'<button class="btn ghost sm" id="svcNotifyBtn">🔔 Enable notifications</button>':''}
+       <button class="btn ghost sm" id="svcIntToggle">⚙ Service intervals</button></div>
+   </div>
+   <div class="card" id="svcIntCard" style="display:none"><h2 class="section">Default Service Intervals</h2>
+     <div class="muted" style="margin-bottom:12px">Per equipment type: unit, service every, and how early to raise the alert. Individual alerts can override these.</div>
+     ${rows}<button class="btn red block" id="svcIntSave">Save intervals</button></div>
+   <div class="card"><div class="chip-row" id="svcChips">${chips.map(x=>`<button class="chip ${svcAdm.filter===x[0]?'sel':''}" data-f="${x[0]}">${x[1]} (${x[2]})</button>`).join('')}</div>
+     <div class="field" style="margin:12px 0 0"><input id="svcSearch" placeholder="Search plate no. / equipment type" value="${escHtml(svcAdm.q)}"></div></div>
+   <div id="svcList"></div>`;
+  document.getElementById('svcAdd').onclick=()=>renderSvcForm(null);
+  document.getElementById('svcIntToggle').onclick=()=>{const c=document.getElementById('svcIntCard');c.style.display=c.style.display==='none'?'block':'none';};
+  document.getElementById('svcIntSave').onclick=saveIntervals;
+  document.getElementById('svcRebuild').onclick=async(e)=>{
+    e.target.disabled=true; e.target.textContent='Refreshing…';
+    try{ const n=await svcRebuildStatus(); toast('Readings updated for '+n+' equipment'); await renderSvcAdmin(); }
+    catch(err){ toast('Refresh failed'); e.target.disabled=false; e.target.textContent='↻ Refresh readings from checklists'; }
+  };
+  const nb=document.getElementById('svcNotifyBtn'); if(nb) nb.onclick=async()=>{ if(await svcEnableNotify()) drawSvcAdmin(); };
+  document.querySelectorAll('#svcChips .chip').forEach(b=>b.onclick=()=>{svcAdm.filter=b.dataset.f;drawSvcAdmin();});
+  document.getElementById('svcSearch').oninput=e=>{svcAdm.q=e.target.value;drawSvcAdmList();};
+  drawSvcAdmList();
+  svcMaybeNotify(items);
+}
+function drawSvcAdmList(){
+  const q=svcAdm.q.trim().toLowerCase();
+  let list=svcAdm.items.filter(x=>svcAdm.filter==='ALL'||x.level===svcAdm.filter);
+  if(q) list=list.filter(x=>(x.plate+' '+x.equipLabel).toLowerCase().includes(q));
+  const box=document.getElementById('svcList');
+  box.innerHTML=list.length?list.map(x=>svcCardHtml(x,true)).join(''):'<div class="card empty">No alerts match.<br>Add an alert, or tap "Refresh readings" to load equipment from checklists.</div>';
+  box.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>svcAction(b.dataset.act,b.dataset.k));
+}
+async function svcAction(act,key){
+  const it=svcAdm.items.find(x=>x.key===key); if(!it) return;
+  if(act==='edit') return renderSvcForm(it);
+  if(act==='svc'){
+    const n=await svcPrompt('Mark as serviced',`${it.plate}: enter the ${it.unit==='HR'?'hour':'KM'} reading at service.`,it.reading);
+    if(n==null) return;
+    try{
+      await db.collection('serviceAlerts').doc(key).set({plate:it.plate,equip:it.equip,lastServiceReading:n,lastServiceDate:new Date().toISOString().slice(0,10),updatedAt:new Date().toISOString()},{merge:true});
+      toast('Service recorded'); renderSvcAdmin();
+    }catch(e){ toast('Save failed'); }
+    return;
+  }
+  if(act==='del'){
+    const ok=await confirmDialog('Delete this alert?',`The service plan for ${it.plate} will be removed. The equipment reappears as "Set up needed" until you configure it again.`);
+    if(!ok) return;
+    try{ await db.collection('serviceAlerts').doc(key).delete(); toast('Alert deleted'); renderSvcAdmin(); }
+    catch(e){ toast('Delete failed'); }
+  }
+}
+async function saveIntervals(){
+  const batch=db.batch(); let bad=false;
+  Object.keys(TEMPLATES).forEach(k=>{
+    const unit=val('dfU_'+k), iv=+val('dfI_'+k), w=+val('dfW_'+k);
+    const okI=Number.isInteger(iv)&&iv>0, okW=Number.isInteger(w)&&w>=0&&w<iv;
+    document.getElementById('dfI_'+k).classList.toggle('invalid',!okI);
+    document.getElementById('dfW_'+k).classList.toggle('invalid',!okW);
+    if(!okI||!okW){ bad=true; return; }
+    batch.set(db.collection('serviceDefaults').doc(k),{unit,interval:iv,warn:w});
+  });
+  if(bad){ toast('Enter whole numbers; alert-before must be less than interval'); return; }
+  try{ await batch.commit(); toast('Intervals saved'); renderSvcAdmin(); }catch(e){ toast('Save failed'); }
+}
+
+function renderSvcForm(it){
+  const isNew=!it, raw=svcAdm.raw; it=it||{};
+  const today=new Date().toISOString().slice(0,10);
+  const eqOpts=Object.keys(TEMPLATES).map(k=>`<option value="${k}" ${it.equip===k?'selected':''}>${escHtml(TEMPLATES[k].label)}</option>`).join('');
+  document.getElementById('main').innerHTML=`<div class="card"><button class="btn ghost sm" id="sBack">&larr; Cancel</button></div>
+   <div class="card"><h2 class="section">${isNew?'Add Service Alert':'Edit Service Alert'}</h2>
+    <div class="field"><label>Plate / Equipment No. <span class="req">*</span></label><input id="sPlate" value="${escHtml(it.plate||'')}" ${isNew?'':'readonly'}>
+      <div class="muted" id="sInfo" style="margin-top:4px"></div></div>
+    <div class="field"><label>Equipment type <span class="req">*</span></label><select id="sEquip"><option value="">Select…</option>${eqOpts}</select></div>
+    <div class="grid">
+      <div class="field"><label>Unit</label><select id="sUnit"><option value="">Type default</option><option ${it.hasAlert&&it.unit==='KM'&&raw.alerts[it.key]&&raw.alerts[it.key].unit?'selected':''}>KM</option><option ${it.hasAlert&&it.unit==='HR'&&raw.alerts[it.key]&&raw.alerts[it.key].unit?'selected':''}>HR</option></select></div>
+      <div class="field"><label>Service every</label><input id="sInterval" inputmode="numeric" placeholder="Type default" value="${it.customInterval?it.interval:''}"></div>
+      <div class="field"><label>Alert before</label><input id="sWarn" inputmode="numeric" placeholder="Type default" value="${it.customWarn?it.warn:''}"></div>
+      <div class="field"><label>Last service reading <span class="req">*</span></label><input id="sLast" inputmode="numeric" value="${it.last!=null?it.last:''}" placeholder="KM / hours"></div>
+      <div class="field"><label>Last service date</label><input type="date" id="sLastDate" value="${it.lastDate||today}"></div>
+    </div>
+    <div class="field"><label>Notes</label><textarea id="sNotes" placeholder="e.g. 250 hr service, oil + filters">${escHtml(it.notes||'')}</textarea></div>
+    <div class="errmsg" id="sErr"></div>
+    <button class="btn red block" id="sSave">Save alert</button></div>`;
+  const info=()=>{
+    const st=raw.status[plateKey(val('sPlate'))];
+    document.getElementById('sInfo').textContent = st ? `Current reading: ${fmtNum(st.reading)} (${st.date||'—'})` : (val('sPlate').trim()?'No checklist reading found for this plate yet':'');
+    if(st&&!val('sEquip')&&st.equip) document.getElementById('sEquip').value=st.equip;
+  };
+  document.getElementById('sPlate').addEventListener('blur',info); info();
+  document.getElementById('sBack').onclick=renderSvcAdmin;
+  document.getElementById('sSave').onclick=async()=>{
+    const plate=val('sPlate').trim().toUpperCase(), key=plateKey(plate), equip=val('sEquip');
+    const iv=val('sInterval').trim(), w=val('sWarn').trim(), last=val('sLast').trim();
+    let err='';
+    if(!/^[A-Z0-9][A-Z0-9\-\/ ]{0,19}$/.test(plate)) err='Plate / Equipment No. is required';
+    else if(!equip) err='Select the equipment type';
+    else if(!/^\d{1,9}$/.test(last)) err='Last service reading is required (numbers only)';
+    else if(iv&&!/^[1-9]\d{0,8}$/.test(iv)) err='Service interval must be a whole number above 0';
+    else if(w&&!/^\d{1,9}$/.test(w)) err='Alert-before must be a whole number';
+    else if(iv&&w&&+w>=+iv) err='Alert-before must be less than the service interval';
+    const e=document.getElementById('sErr'); e.textContent=err; e.classList.toggle('show',!!err);
+    if(err) return;
+    const btn=document.getElementById('sSave'); btn.disabled=true; btn.textContent='Saving…';
+    try{
+      await db.collection('serviceAlerts').doc(key).set({plate,equip,unit:val('sUnit')||null,interval:iv?+iv:null,warn:w?+w:null,
+        lastServiceReading:+last,lastServiceDate:val('sLastDate')||'',notes:val('sNotes').trim(),updatedAt:new Date().toISOString()});
+      toast('Alert saved'); renderSvcAdmin();
+    }catch(ex){ toast('Save failed'); btn.disabled=false; btn.textContent='Save alert'; }
+  };
 }
 
 gate();
